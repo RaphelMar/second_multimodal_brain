@@ -1,0 +1,53 @@
+# =========================
+# VideoBrain V2 - Gitignore
+# =========================
+
+# Variáveis de Ambiente e Segredos (CRÍTICO)
+.env
+.env.*
+*.env
+
+# Ambientes Virtuais Python
+.venv/
+venv/
+env/
+
+# Cache e Binários do Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Banco de Dados Vetorial (ChromaDB)
+# Não queremos subir gigabytes de embeddings para o GitHub
+data/chromadb/
+*.sqlite3
+
+# Arquivos Temporários e Mídia Baixada
+# O yt-dlp e o docling vão gerar lixo aqui
+/tmp/
+temp/
+*.mp4
+*.mp3
+*.m4a
+*.wav
+*.webm
+*.pdf
+
+# Configurações do Mac (Apple Silicon)
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# IDEs e Editores
+.vscode/
+.idea/
+*.swp
+
+# Arquivos de Ferramentas de IA (Opcional)
+.claude/
+.cursor/
+# summary.md # Descomente esta linha se NÃO quiser enviar os logs do agente para o GitHub

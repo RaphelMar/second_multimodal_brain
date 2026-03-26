@@ -1,0 +1,9 @@
+streamlit==1.39.0
+langchain==0.3.7
+langchain-ollama==0.2.0
+langchain-chroma==0.1.4
+langchain-experimental==0.3.2
+faster-whisper==1.0.3
+yt-dlp==2024.11.18
+docling==2.3.2
+python-dotenv==1.0.1
