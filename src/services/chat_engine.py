@@ -66,8 +66,11 @@ class ChatAssistant:
         )
 
         # Prompt principal de QA com contexto vetorial
+        with open(SYSTEM_PROMPT, 'r') as file:
+            prompt_content = file.read()
+
         qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT + "\n\nContexto relevante:\n{context}"),
+            ("system", prompt_content + "\n\nContexto relevante:\n{context}"),
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ])

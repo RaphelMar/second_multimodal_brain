@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
-from src.config.settings import EMBEDDING_MODEL
+from src.config.settings import EMBEDDING_MODEL, CHUNKER_BREAKPOINT_THRESHOLD, CHUNKER_MIN_CHUNK_CHARS
 from src.config.logger import logger
 
 
@@ -17,7 +17,11 @@ class SemanticProcessor:
         """
         try:
             self.embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
-            self.chunker = SemanticChunker(self.embeddings, breakpoint_threshold_type= "percentile", breakpoint_threshold_amount= 92)
+            self.chunker = SemanticChunker(
+                self.embeddings,
+                breakpoint_threshold_type= "percentile",
+                breakpoint_threshold_amount= CHUNKER_BREAKPOINT_THRESHOLD
+            )
             logger.info("SemanticProcessor inicializado com sucesso.")
         except Exception as e:
             logger.error(f"Erro ao inicializar SemanticProcessor: {e}")
@@ -45,6 +49,9 @@ class SemanticProcessor:
         try:
             # Divide o texto em chunks semanticamente
             chunks = self.chunker.split_text(text)
+
+            # Filtra chunks sem valor semântico
+            chunks = [c for c in chunks if len(c) >= CHUNKER_MIN_CHUNK_CHARS]
 
             # Prepara os metadados base
             base_metadata = {

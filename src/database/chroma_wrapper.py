@@ -24,12 +24,12 @@ class VectorDB:
             os.makedirs(CHROMA_PATH, exist_ok=True)
 
             # Inicializa o embedding model
-            self.embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+            self._embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
 
             # Inicializa o ChromaDB
-            self.db = Chroma(
+            self._db = Chroma(
                 persist_directory=CHROMA_PATH,
-                embedding_function=self.embeddings
+                embedding_function=self._embeddings
             )
 
             logger.info("ChromaDB inicializado com sucesso.")
@@ -49,7 +49,7 @@ class VectorDB:
             True se já existir pelo menos um documento com esse source_id.
         """
         try:
-            results = self.db.get(where= {"source_id": source_id}, limit= 1)
+            results = self._db.get(where= {"source_id": source_id}, limit= 1)
             exists = bool(results and results.get("ids"))
             if exists:
                 logger.info(f"source_id '{source_id[:16]}....' já existe no banco.")
@@ -74,7 +74,7 @@ class VectorDB:
             return 0
 
         try:
-            self.db.add_documents(chunks)
+            self._db.add_documents(chunks)
             logger.info(f"{len(chunks)} chunks adicionados ao ChromaDB.")
             return len(chunks)
 
@@ -89,4 +89,4 @@ class VectorDB:
         Args:
             k: Número de documentos similares a retornar.
         """
-        return self.db.as_retriever(search_kwargs={"k": k})
+        return self._db.as_retriever(search_kwargs={"k": k})

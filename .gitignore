@@ -21,6 +21,7 @@ __pycache__/
 
 # Banco de Dados Vetorial (ChromaDB)
 # Não queremos subir gigabytes de embeddings para o GitHub
+data/
 data/chromadb/
 *.sqlite3
 
