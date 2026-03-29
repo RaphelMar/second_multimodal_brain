@@ -8,6 +8,12 @@ from src.config.logger import logger
 class VectorDB:
     """
     Wrapper para o ChromaDB com integração OllamaEmbeddings.
+
+    Responsabilidades:
+        - Gerenciar conexão com o ChromaDB persistente
+        - Expor retriever compatível com LangChain
+        - Adicionar e buscar documentos vetorizados
+        - Garantir integridade dos dados (sem duplicatas)
     """
     def __init__(self):
         """
@@ -31,32 +37,56 @@ class VectorDB:
             logger.error(f"Erro ao inicializar ChromaDB: {e}")
             raise
 
-    def add_chunks(self, chunks):
+    def source_exists(self, source_id: str) -> bool:
+        """
+        Verifica se um source_id já existe no banco.
+        Chamada rápida (sem embedding, sem busca vetorial) — usa o filtro
+        de metadados direto na collection do Chroma.
+
+        Args:
+            source_id: Identificador único da fonte (ex: SHA256 da URL).
+        Returns:
+            True se já existir pelo menos um documento com esse source_id.
+        """
+        try:
+            results = self.db.get(where= {"source_id": source_id}, limit= 1)
+            exists = bool(results and results.get("ids"))
+            if exists:
+                logger.info(f"source_id '{source_id[:16]}....' já existe no banco.")
+            return(exists)
+        except Exception as e:
+            logger.error(f"Erro ao verificar duplicada para '{source_id[:16]}...': {e}")
+            raise
+
+    def add_chunks(self, chunks) -> int:
         """
         Adiciona chunks ao banco de dados vetorial.
+
         Args:
-            chunks (list): Lista de objetos Document com page_content e metadata.
+            chunks: Lista de objetos Document com page_content e metadata.
+
+        Returns:
+            Número de chunks adicionados.
         """
+
+        if not chunks:
+            logger.warning("add_chunks chamado com lista vazia.")
+            return 0
+
         try:
             self.db.add_documents(chunks)
             logger.info(f"{len(chunks)} chunks adicionados ao ChromaDB.")
+            return len(chunks)
+
         except Exception as e:
             logger.error(f"Erro ao adicionar chunks ao ChromaDB: {e}")
             raise
 
-    def search(self, query, k=5):
+    def retriever(self, k=5):
         """
-        Realiza uma busca vetorial no banco de dados.
+        Retorna um retriever LangChain configurado.
+
         Args:
-            query (str): Texto da consulta.
-            k (int): Número de resultados desejados. Padrão é 5.
-        Returns:
-            list: Lista de documentos similares.
+            k: Número de documentos similares a retornar.
         """
-        try:
-            results = self.db.similarity_search(query, k=k)
-            logger.info(f"Busca realizada com sucesso. {len(results)} resultados encontrados.")
-            return results
-        except Exception as e:
-            logger.error(f"Erro ao realizar busca no ChromaDB: {e}")
-            raise
+        return self.db.as_retriever(search_kwargs={"k": k})

@@ -24,42 +24,51 @@ def run(url: str, category: str) -> int:
     Orquestra o pipeline completo de ingestão de vídeo do YouTube.
 
     Fluxo:
-        1. Extrai título via yt-dlp (sem download)
-        2. Faz download do áudio para /tmp/
-        3. Transcreve com faster-whisper (modelo destruído ao final)
-        4. Apaga o ficheiro de áudio
-        5. Processa o texto com SemanticChunker
-        6. Persiste os chunks no ChromaDB
+        1. Gera source_id e verifica duplicata (antes de qualquer trabalho pesado)
+        2. Extrai título via yt-dlp (sem download)
+        3. Faz download do áudio para /tmp/
+        4. Transcreve com faster-whisper (modelo destruído ao final)
+        5. Apaga o ficheiro de áudio
+        6. Processa o texto com SemanticChunker
+        7. Persiste os chunks no ChromaDB
 
     Args:
-        url (str): URL do vídeo do YouTube.
-        category (str): Categoria definida pelo utilizador na UI.
+        url: URL do vídeo do YouTube.
+        category: Categoria definida pelo utilizador na UI.
 
     Returns:
-        int: Número de chunks armazenados no ChromaDB.
+        Número de chunks armazenados no ChromaDB (0 se duplicata).
     """
     logger.info(f"[youtube_pipeline] Iniciando pipeline para: {url}")
 
-    # 1. Título
+    # 1. Verificação de duplicada (ANTES do trabalho pesado)
+    source_id = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    db = VectorDB()
+
+    if db.source_exists(source_id):
+        logger.info(f"[youtube_pipeline] Vídeo já processado. Pulando: {url}")
+        return 0
+
+
+    # 2. Título
     title = _extract_title(url)
     logger.info(f"[youtube_pipeline] Título: {title}")
 
-    # 2. Download do áudio
+    # 3. Download do áudio
     audio_path = download_audio(url)
 
-    # 3. Transcrição — o modelo Whisper é destruído dentro de transcribe()
+    # 4. Transcrição — o modelo Whisper é destruído dentro de transcribe()
     transcriber = WhisperTranscriber()
     transcript = transcriber.transcribe(audio_path)
 
-    # 4. Apagar ficheiro de áudio (liberta disco imediatamente)
+    # 5. Apagar ficheiro de áudio (liberta disco imediatamente)
     try:
         os.remove(audio_path)
         logger.info(f"[youtube_pipeline] Ficheiro de áudio removido: {audio_path}")
     except OSError as e:
         logger.warning(f"[youtube_pipeline] Não foi possível remover o áudio: {e}")
 
-    # 5. Chunking semântico
-    source_id = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    # 6. Chunking semântico
     processor = SemanticProcessor()
     chunks = processor.process_and_format(
         text=transcript,
@@ -71,9 +80,8 @@ def run(url: str, category: str) -> int:
         },
     )
 
-    # 6. Persistência no ChromaDB
-    db = VectorDB()
-    db.add_chunks(chunks)
+    # 7. Persistência no ChromaDB
+    added = db.add_chunks(chunks)
 
-    logger.info(f"[youtube_pipeline] Pipeline concluído. {len(chunks)} chunks armazenados.")
+    logger.info(f"[youtube_pipeline] Pipeline concluído. {added} chunks armazenados.")
     return len(chunks)

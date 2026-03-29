@@ -28,11 +28,11 @@ class ChatAssistant:
         try:
             logger.info(f"Inicializando ChatAssistant com modelo '{LLM_MODEL}'...")
 
-            self.llm = ChatOllama(model=LLM_MODEL, temperature=0.7)
+            self.llm = ChatOllama(model=LLM_MODEL, temperature=0.5)
             self._sessions: dict[str, InMemoryChatMessageHistory] = {}
 
             vector_db = VectorDB()
-            retriever = vector_db.db.as_retriever(search_kwargs={"k": 5})
+            retriever = vector_db.retriever(k= 5)
 
             self._chain = self._build_chain(retriever)
             logger.info("ChatAssistant inicializado com sucesso.")
