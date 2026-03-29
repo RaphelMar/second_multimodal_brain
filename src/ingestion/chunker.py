@@ -17,7 +17,7 @@ class SemanticProcessor:
         """
         try:
             self.embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
-            self.chunker = SemanticChunker(self.embeddings, breakpoint_threshold_type= "percentile", breakpoint_threshold_amount= 90)
+            self.chunker = SemanticChunker(self.embeddings, breakpoint_threshold_type= "percentile", breakpoint_threshold_amount= 92)
             logger.info("SemanticProcessor inicializado com sucesso.")
         except Exception as e:
             logger.error(f"Erro ao inicializar SemanticProcessor: {e}")
