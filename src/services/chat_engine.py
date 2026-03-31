@@ -1,89 +1,108 @@
+import os
 from typing import Generator
 
-from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_ollama import ChatOllama
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableBranch
 
-from src.config.settings import LLM_MODEL, SYSTEM_PROMPT
+from langchain_ollama import ChatOllama, OllamaEmbeddings
+
+# Importamos o EMBEDDING_MODEL para injetar a dependência no banco
+from src.config.settings import LLM_MODEL, EMBEDDING_MODEL, SYSTEM_PROMPT
 from src.config.logger import logger
 from src.database.chroma_wrapper import VectorDB
 
-
 class ChatAssistant:
     """
-    Motor de chat RAG com histórico de sessão em memória.
-
-    A persona é controlada inteiramente por SYSTEM_PROMPT (settings.py / .env),
-    garantindo o critério de agnosticismo de agente do BLUEPRINT.
+    Motor de chat RAG com histórico de sessão em memória,
+    construído puramente com LCEL (LangChain Expression Language).
     """
 
     def __init__(self):
-        """
-        Instancia o ChatOllama, o retriever do ChromaDB e monta a cadeia RAG
-        com suporte a histórico de conversação por sessão.
-        """
         try:
             logger.info(f"Inicializando ChatAssistant com modelo '{LLM_MODEL}'...")
 
             self.llm = ChatOllama(model=LLM_MODEL, temperature=0.5)
             self._sessions: dict[str, InMemoryChatMessageHistory] = {}
 
-            vector_db = VectorDB()
+            embedding_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
+            vector_db = VectorDB(embeddings= embedding_model)
             retriever = vector_db.retriever(k= 5)
 
             self._chain = self._build_chain(retriever)
             logger.info("ChatAssistant inicializado com sucesso.")
 
-        except Exception as e:
-            logger.error(f"Erro ao inicializar ChatAssistant: {e}")
+        except Exception:
+            logger.exception(f"Erro ao inicializar ChatAssistant")
             raise
+
+    def _load_system_prompt(self, system_prompt) -> str:
+        """
+        Lê o prompt do sistema a partir do ficheiro .md referenciado no .env.
+        Inclui um fallback de segurança caso o ficheiro seja movido ou apagado.
+        """
+        fallback = "Voce é um assistente de IA focado em ajudar o utilizador"
+        if not system_prompt:
+            return fallback
+        
+        try:
+            with open(system_prompt, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception: 
+            logger.exception(f"Erro ao ler o ficheiro de prompt '{system_prompt}'. Usando fallback.")
+            return fallback
+
+    def _format_docs(self, docs) -> str:
+        """Utilitário LCEL: Converte os chunks vetoriais numa única string."""
+        return "\n\n".join(doc.page_content for doc in docs)
 
     def _build_chain(self, retriever) -> RunnableWithMessageHistory:
         """
-        Constrói a cadeia RAG completa:
-          1. History-aware retriever — reformula a query com base no histórico.
-          2. Stuff documents chain — responde usando o contexto recuperado.
-          3. Retrieval chain — combina os dois anteriores.
-          4. RunnableWithMessageHistory — injeta o histórico por session_id.
+        Orquestra a cadeia RAG usando a sintaxe declarativa LCEL (|).
         """
-        # Prompt para reformular a pergunta como query independente do histórico
+        # 1. Reformulação da Pergunta (History-Aware)
         contextualize_prompt = ChatPromptTemplate.from_messages([
             (
-                "system",
-                "Dado o histórico de chat e a última pergunta do utilizador, "
-                "reformule a pergunta como uma query independente e autocontida, "
-                "sem alterar o seu significado. Se já for independente, retorne-a sem modificações.",
+            "system",
+            "Dado o histórico de chat e a última pergunta do utilizador, "
+            "reformule a pergunta como uma query independente e autocontida, "
+            "sem alterar o seu significado. Se já for independente, retorne-a sem modificações.",
             ),
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ])
 
-        history_aware_retriever = create_history_aware_retriever(
-            self.llm, retriever, contextualize_prompt
+        condense_question_chain = contextualize_prompt | self.llm | StrOutputParser()
+        history_aware_retriever = RunnableBranch(
+            (lambda x: bool(x.get("chat_history")), condense_question_chain | retriever),
+            (lambda x: x["input"]) | retriever 
         )
 
-        # Prompt principal de QA com contexto vetorial
-        with open(SYSTEM_PROMPT, 'r') as file:
-            prompt_content = file.read()
-
+        # 2. Prompt principal de QA com contexto vetorial
+        system_prompt_content = self._load_system_prompt(system_prompt= SYSTEM_PROMPT)
         qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", prompt_content + "\n\nContexto relevante:\n{context}"),
+            ("system", system_prompt_content + "\n<rag_context>\n{context}\n</rag_context>"),
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ])
 
-        qa_chain = create_stuff_documents_chain(self.llm, qa_prompt)
-        rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
-
+        # 3. O coração do LCEL: O Pipeline Declarativo
+        # Lê-se: Atribui o contexto -> Passa para o prompt -> Executa LLM -> Converte para String
+        rag_chain = (
+            RunnablePassthrough.assign(context= history_aware_retriever | self._format_docs)
+            | qa_prompt
+            | self.llm
+            | StrOutputParser()
+        )
+    
         return RunnableWithMessageHistory(
             rag_chain,
             self._get_session_history,
             input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer",
+            history_messages_key="chat_history"
         )
 
     def _get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
@@ -95,11 +114,9 @@ class ChatAssistant:
     def get_response(self, question: str, session_id: str = "default") -> Generator[str, None, None]:
         """
         Gera a resposta em modo streaming, compatível com `st.write_stream`.
-
         Args:
             question (str): Pergunta do utilizador.
             session_id (str): Identificador da sessão (mantém histórico isolado por utilizador).
-
         Yields:
             str: Fragmentos de texto da resposta à medida que são gerados pelo LLM.
         """
@@ -109,5 +126,4 @@ class ChatAssistant:
             {"input": question},
             config={"configurable": {"session_id": session_id}},
         ):
-            if answer_chunk := chunk.get("answer", ""):
-                yield answer_chunk
+            yield chunk

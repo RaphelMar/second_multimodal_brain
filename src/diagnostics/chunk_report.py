@@ -20,6 +20,8 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from langchain_ollama import OllamaEmbeddings
+from src.config.settings import EMBEDDING_MODEL
 
 import numpy as np
 
@@ -92,7 +94,9 @@ class ChunkDiagnostics:
     """
 
     def __init__(self):
-        self._db = VectorDB()
+        embeddings_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
+
+        self._db = VectorDB(embeddings= embeddings_model)
         # Acesso direto à collection do Chroma pra queries de diagnóstico.
         # Necessário porque o wrapper do LangChain não expõe metadados em bulk.
         self._collection = self._db._db._collection
