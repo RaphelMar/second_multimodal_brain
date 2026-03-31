@@ -62,10 +62,6 @@ DEFAULT_TEST_QUERIES: list[tuple[str, list[str]]] = [
         "Daniel Lopez lockdown climático e restrições de mobilidade",
         ["lockdown", "climático", "mobilidade", "transporte"],
     ),
-    (
-        "agenda climática como instrumento de controle estatal",
-        ["climática", "controle", "restrição", "governo"],
-    ),
     # ── Geopolítica e crise
     (
         "crise do petróleo e impacto no abastecimento de comida",

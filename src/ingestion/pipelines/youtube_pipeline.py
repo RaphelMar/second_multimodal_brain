@@ -1,13 +1,16 @@
 import hashlib
 import os
+import gc
 
 import yt_dlp
+from langchain_ollama import OllamaEmbeddings
 
 from src.ingestion.extractors.youtube_extractor import download_audio
 from src.ingestion.transcribers.local_whisper import WhisperTranscriber
 from src.ingestion.chunker import SemanticProcessor
 from src.database.chroma_wrapper import VectorDB
 from src.config.logger import logger
+from src.config.settings import EMBEDDING_MODEL
 
 
 def _extract_title(url: str) -> str:
@@ -41,35 +44,41 @@ def run(url: str, category: str) -> int:
     """
     logger.info(f"[youtube_pipeline] Iniciando pipeline para: {url}")
 
-    # 1. Verificação de duplicada (ANTES do trabalho pesado)
+    # 1. Instancia o Embedding centralizado (Single Source of Truth)
+    embeddings_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
+
+    # 2. Injeta dependência no banco e verifica duplicata
+    db = VectorDB(embeddings=embeddings_model)
     source_id = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    db = VectorDB()
 
     if db.source_exists(source_id):
         logger.info(f"[youtube_pipeline] Vídeo já processado. Pulando: {url}")
         return 0
 
-
-    # 2. Título
+    # 3. Título
     title = _extract_title(url)
     logger.info(f"[youtube_pipeline] Título: {title}")
 
-    # 3. Download do áudio
+    # 4. Download do áudio
     audio_path = download_audio(url)
 
-    # 4. Transcrição — o modelo Whisper é destruído dentro de transcribe()
+    # 5. Transcrição — o modelo Whisper é destruído dentro de transcribe()
     transcriber = WhisperTranscriber()
     transcript = transcriber.transcribe(audio_path)
 
-    # 5. Apagar ficheiro de áudio (liberta disco imediatamente)
+    # 6 Limpeza critica de memoria
+    del transcriber
+    gc.collect()
+
+    # 7. Apagar ficheiro de áudio (liberta disco imediatamente)
     try:
         os.remove(audio_path)
         logger.info(f"[youtube_pipeline] Ficheiro de áudio removido: {audio_path}")
     except OSError as e:
         logger.warning(f"[youtube_pipeline] Não foi possível remover o áudio: {e}")
 
-    # 6. Chunking semântico
-    processor = SemanticProcessor()
+    # 8. Chunking semântico
+    processor = SemanticProcessor(embeddings=embeddings_model)
     chunks = processor.process_and_format(
         text=transcript,
         metadata_dict={
@@ -80,8 +89,7 @@ def run(url: str, category: str) -> int:
         },
     )
 
-    # 7. Persistência no ChromaDB
+    # 9. Persistência no ChromaDB
     added = db.add_chunks(chunks)
-
     logger.info(f"[youtube_pipeline] Pipeline concluído. {added} chunks armazenados.")
     return len(chunks)

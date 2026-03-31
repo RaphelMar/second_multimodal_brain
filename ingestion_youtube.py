@@ -3,7 +3,7 @@ from src.ingestion.pipelines import youtube_pipeline
 
 df = (
     pl.read_excel("data/temp/links.xlsx")
-    .slice(0, 10)
+    .slice(0, 5)
 )
 
 for row in df.iter_rows(named= True):

@@ -1,31 +1,37 @@
 import hashlib
-from typing import List, Dict, Any
+from typing import Any
 from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
-from src.config.settings import EMBEDDING_MODEL, CHUNKER_BREAKPOINT_THRESHOLD, CHUNKER_MIN_CHUNK_CHARS
+from langchain_core.embeddings import Embeddings
 from src.config.logger import logger
+from src.config.settings import (
+    CHUNKER_BREAKPOINT_THRESHOLD,
+    CHUNKER_MIN_CHUNK_CHARS,
+    CHUNKER_MAX_CHUNK_CHARS,
+    FALLBACK_OVERLAP
+)
 
 
 class SemanticProcessor:
-    """
-    Processador semântico para divisão de texto e formatação de metadados.
-    """
-    def __init__(self):
+    """Processador semântico para divisão de texto usando DI."""
+
+    def __init__(self, embeddings: Embeddings):
         """
         Inicializa o SemanticChunker com embeddings do Ollama.
         """
-        try:
-            self.embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
-            self.chunker = SemanticChunker(
-                self.embeddings,
-                breakpoint_threshold_type= "percentile",
-                breakpoint_threshold_amount= CHUNKER_BREAKPOINT_THRESHOLD
-            )
-            logger.info("SemanticProcessor inicializado com sucesso.")
-        except Exception as e:
-            logger.error(f"Erro ao inicializar SemanticProcessor: {e}")
-            raise
+        self.embeddings = embeddings
+        self.semantic_chunker = SemanticChunker(
+            self.embeddings,
+            breakpoint_threshold_type= "percentile",
+            breakpoint_threshold_amount= CHUNKER_BREAKPOINT_THRESHOLD
+        )
+
+        self.fallback_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=CHUNKER_MAX_CHUNK_CHARS,
+            chunk_overlap=FALLBACK_OVERLAP,
+            separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""]
+        )
 
     def _generate_source_id(self, content: str) -> str:
         """
@@ -37,21 +43,41 @@ class SemanticProcessor:
         """
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
-    def process_and_format(self, text: str, metadata_dict: Dict[str, Any]) -> List[Document]:
+    def process_and_format(self, text: str, metadata_dict: dict[str, Any]) -> list[Document]:
         """
         Processa o texto usando SemanticChunker e formata os metadados.
         Args:
             text (str): Texto a ser dividido em chunks.
             metadata_dict (dict): Dicionário com metadados (source_type, category, title).
         Returns:
-            List[Document]: Lista de objetos Document com conteúdo e metadados formatados.
+            list[Document]: Lista de objetos Document com conteúdo e metadados formatados.
         """
         try:
+            # Guard Clause: Aborta processamento se o texto for vazio/nulo
+            if not text or not text.strip():
+                logger.warning(
+                    "Texto vazio recebido. Abortando processamento.", 
+                    extra={"source_id": metadata_dict.get("source_id")}
+                )
+                return []
+            
             # Divide o texto em chunks semanticamente
-            chunks = self.chunker.split_text(text)
+            raw_chunks = self.semantic_chunker.split_text(text)
 
-            # Filtra chunks sem valor semântico
-            chunks = [c for c in chunks if len(c) >= CHUNKER_MIN_CHUNK_CHARS]
+            chunks: list[str] = []
+            giant_chunks = 0
+
+            for chunk in raw_chunks:
+                tamanho = len(chunk)
+                if tamanho < CHUNKER_MIN_CHUNK_CHARS:
+                    continue
+                
+                if tamanho > CHUNKER_MAX_CHUNK_CHARS:
+                    giant_chunks += 1
+                    chunks.extend(self.fallback_splitter.split_text(chunk))
+
+                else:
+                    chunks.append(chunk)
 
             # Prepara os metadados base
             base_metadata = {
@@ -62,26 +88,23 @@ class SemanticProcessor:
 
             # Usa source_id do metadata_dict (hash da URL/path do pipeline)
             # ou gera a partir do texto como fallback
-            base_metadata["source_id"] = metadata_dict.get(
-                "source_id", self._generate_source_id(text)
-            )
+            base_metadata["source_id"] = metadata_dict.get("source_id") or self._generate_source_id(text)
 
             # Cria lista de Documentos com metadados
-            documents = []
-            for i, chunk in enumerate(chunks):
-                # Adiciona índice do chunk aos metadados
-                chunk_metadata = base_metadata.copy()
-                chunk_metadata["chunk_index"] = i
-
-                doc = Document(
+            documents = [
+                Document(
                     page_content=chunk,
-                    metadata=chunk_metadata
+                    metadata={**base_metadata, "chunk_index": i}
                 )
-                documents.append(doc)
+                for i, chunk in enumerate(chunks)
+            ]
 
-            logger.info(f"Texto processado em {len(documents)} chunks.")
+            logger.info("processamento_concluido", extra={
+                "total_chunks": len(documents),
+                "fallbacks_acionados": giant_chunks
+            })
             return documents
 
-        except Exception as e:
-            logger.error(f"Erro ao processar texto: {e}")
+        except Exception:
+            logger.exception("Erro crítico ao processar texto.")
             raise

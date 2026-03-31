@@ -1,30 +1,22 @@
 import os
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings
-from src.config.settings import EMBEDDING_MODEL, CHROMA_PATH
+from langchain_core.embeddings import Embeddings
+from src.config.settings import CHROMA_PATH
 from src.config.logger import logger
 
 
 class VectorDB:
-    """
-    Wrapper para o ChromaDB com integração OllamaEmbeddings.
-
-    Responsabilidades:
-        - Gerenciar conexão com o ChromaDB persistente
-        - Expor retriever compatível com LangChain
-        - Adicionar e buscar documentos vetorizados
-        - Garantir integridade dos dados (sem duplicatas)
-    """
-    def __init__(self):
+    """Wrapper para o ChromaDB com injeção de dependência."""
+    def __init__(self, embeddings: Embeddings):
         """
-        Inicializa o ChromaDB com OllamaEmbeddings.
+        Inicializa o ChromaDB exigindo o modelo de embeddings por injeção.
         """
         try:
             # Certifica-se de que o diretório existe
             os.makedirs(CHROMA_PATH, exist_ok=True)
 
             # Inicializa o embedding model
-            self._embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+            self._embeddings = embeddings
 
             # Inicializa o ChromaDB
             self._db = Chroma(
@@ -32,7 +24,7 @@ class VectorDB:
                 embedding_function=self._embeddings
             )
 
-            logger.info("ChromaDB inicializado com sucesso.")
+            logger.info("ChromaDB inicializado com sucesso via DI.")
         except Exception as e:
             logger.error(f"Erro ao inicializar ChromaDB: {e}")
             raise
@@ -54,8 +46,8 @@ class VectorDB:
             if exists:
                 logger.info(f"source_id '{source_id[:16]}....' já existe no banco.")
             return(exists)
-        except Exception as e:
-            logger.error(f"Erro ao verificar duplicada para '{source_id[:16]}...': {e}")
+        except Exception:
+            logger.exception(f"Erro ao verificar duplicada para '{source_id[:16]}...'")
             raise
 
     def add_chunks(self, chunks) -> int:
@@ -78,14 +70,13 @@ class VectorDB:
             logger.info(f"{len(chunks)} chunks adicionados ao ChromaDB.")
             return len(chunks)
 
-        except Exception as e:
-            logger.error(f"Erro ao adicionar chunks ao ChromaDB: {e}")
+        except Exception:
+            logger.exception(f"Erro ao adicionar chunks ao ChromaDB")
             raise
 
     def retriever(self, k=5):
         """
         Retorna um retriever LangChain configurado.
-
         Args:
             k: Número de documentos similares a retornar.
         """
