@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableBranch
+from langchain_core.messages import SystemMessage
 
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 
@@ -19,6 +20,7 @@ from src.config.settings import (
     EMBEDDING_MODEL,
     SYSTEM_PROMPT,
     CONTEXTUALIZE,
+    MEMCOMPRESSOR,
     RETRIEVER_K,
     RETRIEVER_THRESHOLD
 )
@@ -40,8 +42,8 @@ class ChatAssistant:
             self._sessions: dict[str, InMemoryChatMessageHistory] = {}
 
             embedding_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
-            vector_db = VectorDB(embeddings= embedding_model)
-            retriever = vector_db.retriever(k= RETRIEVER_K, score_threshold= RETRIEVER_THRESHOLD)
+            vector_db = VectorDB(embeddings=embedding_model)
+            retriever = vector_db.retriever(k=RETRIEVER_K, score_threshold=RETRIEVER_THRESHOLD)
 
             self._chain = self._build_chain(retriever)
             logger.info("ChatAssistant inicializado com sucesso.")
@@ -75,7 +77,7 @@ class ChatAssistant:
         Orquestra a cadeia RAG usando a sintaxe declarativa LCEL (|).
         """
         # 1. Reformulação da Pergunta (History-Aware)
-        contextualize_content = self._load_system_prompt(system_prompt= CONTEXTUALIZE)
+        contextualize_content = self._load_system_prompt(system_prompt=CONTEXTUALIZE)
         contextualize_prompt = ChatPromptTemplate.from_messages([
             ("system", contextualize_content),
             MessagesPlaceholder("chat_history"),
@@ -89,7 +91,7 @@ class ChatAssistant:
         )
 
         # 2. Prompt principal de QA com contexto vetorial
-        system_prompt_content = self._load_system_prompt(system_prompt= SYSTEM_PROMPT)
+        system_prompt_content = self._load_system_prompt(system_prompt=SYSTEM_PROMPT)
         qa_prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt_content + "\n<rag_context>\n{context}\n</rag_context>"),
             MessagesPlaceholder("chat_history"),
@@ -99,7 +101,7 @@ class ChatAssistant:
         # 3. O coração do LCEL: O Pipeline Declarativo
         # Lê-se: Atribui o contexto -> Passa para o prompt -> Executa LLM -> Converte para String
         rag_chain = (
-            RunnablePassthrough.assign(context= history_aware_retriever | self._format_docs)
+            RunnablePassthrough.assign(context=history_aware_retriever | self._format_docs)
             | qa_prompt
             | self.llm
             | StrOutputParser()
@@ -117,6 +119,42 @@ class ChatAssistant:
         if session_id not in self._sessions:
             self._sessions[session_id] = InMemoryChatMessageHistory()
         return self._sessions[session_id]
+    
+    def _manage_memory(self, session_id: str):
+        """
+        Monitora o tamanho do histórico. Se exceder o limite seguro,
+        aciona a LLM para resumir a conversa e substitui o histórico pelo resumo.
+        """
+        history = self._get_session_history(session_id)
+
+        # Aproximação rápida: 2.000 tokens ≈ 8.000 caracteres
+        MAX_CHARS = 8000
+
+        # Calcula o tamanho total do histórico atual
+        total_chars = sum(len(m.content) for m in history.messages)
+
+        if total_chars > MAX_CHARS:
+            logger.info(f"[{session_id}] Limite de histórico atingido ({total_chars} chars). Iniciando compressão...")
+
+            # 1. Prepara o texto do histórico para a IA ler
+            history_text = "\n".join([f"{m.type}: {m.content}" for m in history.messages])
+
+            # 2. Cria um prompt focado exclusivamente em sumarização
+            summary_prompt = ChatPromptTemplate.from_template(
+                self._load_system_prompt(MEMCOMPRESSOR) + "\n<history>\n{history}\n</history>" 
+            )
+
+            # 3. Mini-cadeia LCEL para gerar o resumo (usa o mesmo sistema de fallback!)
+            summarizer_chain = summary_prompt | self.llm | StrOutputParser()
+            summary = summarizer_chain.invoke({"history": history_text})
+
+            # 4. A Mágica: Limpa o histórico cheio e injeta o resumo como uma "Mensagem de Sistema"
+            history.clear()
+            history.add_message(
+                SystemMessage(content=f"Resumo das conversas anteriores com o utilizador:\n{summary}")
+            )
+            
+            logger.info(f"[{session_id}] Histórico comprimido com sucesso. Novo tamanho: {len(summary)} chars.")
 
     def get_response(self, question: str, session_id: str = "default") -> Generator[str, None, None]:
         """
@@ -128,6 +166,9 @@ class ChatAssistant:
             str: Fragmentos de texto da resposta à medida que são gerados pelo LLM.
         """
         logger.info(f"[ChatAssistant] Nova pergunta (sessão '{session_id}'): {question[:80]}...")
+
+        # Gerenciamento proativo de memória (Context Window Management)
+        self._manage_memory(session_id)
 
         for chunk in self._chain.stream(
             {"input": question},
