@@ -74,10 +74,21 @@ class VectorDB:
             logger.exception(f"Erro ao adicionar chunks ao ChromaDB")
             raise
 
-    def retriever(self, k=5):
+    def retriever(self, k=5, score_threshold=None):
         """
         Retorna um retriever LangChain configurado.
         Args:
             k: Número de documentos similares a retornar.
+            score_threshold: Índice mínimo de similaridade (ex: 0.5 a 0.8). 
+                             Se for None, retorna sempre os top k.
         """
-        return self._db.as_retriever(search_kwargs={"k": k})
+        search_kwargs = {"k": k}
+
+        if score_threshold is not None:
+            search_kwargs["score_threshold"] = score_threshold
+            return self._db.as_retriever(
+                search_type="similarity_score_threshold",
+                search_kwargs=search_kwargs
+            )
+        
+        return self._db.as_retriever(search_kwargs=search_kwargs)

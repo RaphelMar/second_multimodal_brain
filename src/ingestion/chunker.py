@@ -27,12 +27,6 @@ class SemanticProcessor:
             breakpoint_threshold_amount= CHUNKER_BREAKPOINT_THRESHOLD
         )
 
-        self.fallback_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHUNKER_MAX_CHUNK_CHARS,
-            chunk_overlap=FALLBACK_OVERLAP,
-            separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""]
-        )
-
     def _generate_source_id(self, content: str) -> str:
         """
         Gera um ID único baseado no conteúdo usando SHA-256.
@@ -63,21 +57,7 @@ class SemanticProcessor:
             
             # Divide o texto em chunks semanticamente
             raw_chunks = self.semantic_chunker.split_text(text)
-
-            chunks: list[str] = []
-            giant_chunks = 0
-
-            for chunk in raw_chunks:
-                tamanho = len(chunk)
-                if tamanho < CHUNKER_MIN_CHUNK_CHARS:
-                    continue
-                
-                if tamanho > CHUNKER_MAX_CHUNK_CHARS:
-                    giant_chunks += 1
-                    chunks.extend(self.fallback_splitter.split_text(chunk))
-
-                else:
-                    chunks.append(chunk)
+            chunks = [c for c in raw_chunks if len(c) > CHUNKER_MIN_CHUNK_CHARS]
 
             # Prepara os metadados base
             base_metadata = {
@@ -101,7 +81,6 @@ class SemanticProcessor:
 
             logger.info("processamento_concluido", extra={
                 "total_chunks": len(documents),
-                "fallbacks_acionados": giant_chunks
             })
             return documents
 

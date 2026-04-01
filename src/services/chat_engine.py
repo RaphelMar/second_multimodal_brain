@@ -11,9 +11,17 @@ from langchain_core.runnables import RunnableBranch
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 # Importamos o EMBEDDING_MODEL para injetar a dependência no banco
-from src.config.settings import LLM_MODEL, EMBEDDING_MODEL, SYSTEM_PROMPT
 from src.config.logger import logger
 from src.database.chroma_wrapper import VectorDB
+from src.config.settings import (
+    LLM_MODEL_LOCAL,
+    LLM_MODEL_CLAUD,
+    EMBEDDING_MODEL,
+    SYSTEM_PROMPT,
+    CONTEXTUALIZE,
+    RETRIEVER_K,
+    RETRIEVER_THRESHOLD
+)
 
 class ChatAssistant:
     """
@@ -23,28 +31,31 @@ class ChatAssistant:
 
     def __init__(self):
         try:
-            logger.info(f"Inicializando ChatAssistant com modelo '{LLM_MODEL}'...")
+            logger.info(f"Inicializando ChatAssistant...")
 
-            self.llm = ChatOllama(model=LLM_MODEL, temperature=0.5)
+            llm_local = ChatOllama(model=LLM_MODEL_LOCAL, temperature=0.5, num_ctx=16384)
+            llm_claud = ChatOllama(model=LLM_MODEL_CLAUD, temperature=0.5, num_ctx=16384)
+
+            self.llm = llm_claud.with_fallbacks([llm_local])
             self._sessions: dict[str, InMemoryChatMessageHistory] = {}
 
             embedding_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
             vector_db = VectorDB(embeddings= embedding_model)
-            retriever = vector_db.retriever(k= 5)
+            retriever = vector_db.retriever(k= RETRIEVER_K, score_threshold= RETRIEVER_THRESHOLD)
 
             self._chain = self._build_chain(retriever)
             logger.info("ChatAssistant inicializado com sucesso.")
 
         except Exception:
-            logger.exception(f"Erro ao inicializar ChatAssistant")
+            logger.exception("Erro ao inicializar ChatAssistant")
             raise
 
-    def _load_system_prompt(self, system_prompt) -> str:
+    def _load_system_prompt(self, system_prompt: str) -> str:
         """
         Lê o prompt do sistema a partir do ficheiro .md referenciado no .env.
         Inclui um fallback de segurança caso o ficheiro seja movido ou apagado.
         """
-        fallback = "Voce é um assistente de IA focado em ajudar o utilizador"
+        fallback = "Você é um assistente de IA focado em ajudar o utilizador."
         if not system_prompt:
             return fallback
         
@@ -64,13 +75,9 @@ class ChatAssistant:
         Orquestra a cadeia RAG usando a sintaxe declarativa LCEL (|).
         """
         # 1. Reformulação da Pergunta (History-Aware)
+        contextualize_content = self._load_system_prompt(system_prompt= CONTEXTUALIZE)
         contextualize_prompt = ChatPromptTemplate.from_messages([
-            (
-            "system",
-            "Dado o histórico de chat e a última pergunta do utilizador, "
-            "reformule a pergunta como uma query independente e autocontida, "
-            "sem alterar o seu significado. Se já for independente, retorne-a sem modificações.",
-            ),
+            ("system", contextualize_content),
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ])
