@@ -43,7 +43,7 @@ class ChatAssistant:
 
             embedding_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
             vector_db = VectorDB(embeddings=embedding_model)
-            retriever = vector_db.retriever(k=RETRIEVER_K, score_threshold=RETRIEVER_THRESHOLD)
+            retriever = vector_db.retriever(k=RETRIEVER_K)
 
             self._chain = self._build_chain(retriever)
             logger.info("ChatAssistant inicializado com sucesso.")

@@ -20,7 +20,7 @@ class WhisperTranscriber:
                 f"Carregando modelo Whisper..."
             )
             self.model = WhisperModel(
-                model_size_or_path= "large-v3-turbo",
+                model_size_or_path= "large-v3",
                 device="cpu",
                 compute_type="int8",
             )
